@@ -2,7 +2,8 @@
 
 doomscroller opens Instagram Reels or YouTube Shorts in the browser while
 Claude Code is busy. When Claude goes idle, it pauses the video and switches
-back to Claude. It's a macOS-only bash CLI. See README.md for the user-facing
+back to Claude. It's a macOS bash CLI, with a Windows port in PowerShell under
+`windows/` (see [Windows](#windows) below). See README.md for the user-facing
 docs.
 
 ## Architecture
@@ -29,6 +30,7 @@ lib/
     reels-unmute.js       click Instagram's sound button
     reels-play.js         click Instagram's "Press to play" if the reel is paused
     autoscroll.js         a function; installs the "next video when this one ends" listener
+    video-state.js        is the video on screen playing? (Windows only, before pausing)
   jxa/play-pause-key.js JavaScript for Automation, run by osascript: posts the media play/pause key
 hooks/session-status.sh the Claude Code hook (see below)
 ```
@@ -173,6 +175,95 @@ running keeps the old code until it is restarted.
 - Pressing keys needs Accessibility access, and reading tabs needs Automation
   access to the browser. Both are granted to the *responsible* app, meaning
   the one the user launched doomscroller from, not doomscroller itself.
+
+## Windows
+
+`windows/` is a port of the same design to Windows PowerShell 5.1 and
+Chromium browsers. It mirrors the macOS modules and function names, so a
+change on one side is easy to find on the other:
+
+```
+windows/
+  doomscroller.cmd      shim on PATH: runs doomscroller.ps1 with -ExecutionPolicy Bypass
+  doomscroller.ps1      entry point: dot-sources lib/*.ps1, load_settings, main
+  lib/
+    core.ps1            paths (adds PROFILE_DIR), log() to the console or $LOG_FILE
+    settings.ps1        as settings.sh; browser is "chrome" or an .exe path; adds debug-port
+    sites.ps1           same as sites.sh
+    claude.ps1          as claude.sh; reads with full sharing so the hook can replace the file
+    win32.ps1           counterpart of macos.sh: C# via Add-Type (window focus, keybd_event)
+    browser.ps1         counterpart of browser.sh, over the Chrome DevTools Protocol
+    player.ps1          as player.sh, using ../lib/page/*.js unchanged
+    watcher.ps1         as watcher.sh
+    cli.ps1             as cli.sh
+  hooks/session-status.ps1   the hook, same file format as session-status.sh
+```
+
+The page scripts in `lib/page/` are shared. Keep them browser-neutral.
+
+### Non-obvious decisions on Windows, keep them
+
+- **Chrome is driven over CDP, started by doomscroller** with
+  `--remote-debugging-port` and its own `--user-data-dir`
+  (`~/.doomscroller/browser-profile`). Chrome 136+ ignores the port for the
+  default profile. Tabs come from `GET /json/list`, `GET /json/activate/<id>`
+  selects one, and `Target.createTarget` (browser WebSocket) opens one.
+  `/json/new` needs `PUT` since Chrome 111, so it isn't used. CDP commands go
+  over `System.Net.WebSockets.ClientWebSocket`, one connection per command.
+  .NET's client sends no `Origin`, so no `--remote-allow-origins` is needed.
+  Don't add it: it would let web pages connect.
+- **Reels sound uses `Runtime.evaluate` with `userGesture: true`,** not F13.
+  It sets `navigator.userActivation`, and `video.play()` with sound then
+  works. Verified with headless Chrome 153: `NotAllowedError` without it,
+  `played` with it.
+- **Shorts' space is `Input.dispatchKeyEvent` `rawKeyDown`/`keyUp` with no
+  `text`.** It's trusted (`isTrusted` is true), reaches the tab without
+  focus, and types nothing into a focused input. Verified headless. Reels
+  keep the media play/pause key (`VK_MEDIA_PLAY_PAUSE`) as on macOS.
+- **`pause_video` asks `video-state.js` first** and presses only for a
+  playing video, so pausing doesn't toggle a paused video back on. That
+  replaces the "only when the browser is in front" check.
+- **The background watcher is created with WMI `Win32_Process.Create`,** the
+  setsid equivalent: it belongs to no job object or process tree, so it
+  survives the shell that ran `start`. WMI processes don't inherit the
+  caller's environment, so `_watch` takes every resolved setting as an
+  argument: `_watch <site> <autoscroll> <browser> <claude-app> <debug-port>
+  <status-file> <url>`.
+- **Focusing a window** uses `AttachThreadInput` to the foreground thread,
+  then `SetForegroundWindow`; if Windows still refuses, it presses F13 (so
+  this process sent the last input) and tries again. The browser's window is
+  found from its main process: the one whose command line has the debugging
+  port and no `--type=`.
+- **The hook command works in Git Bash and in PowerShell.** Claude Code runs
+  hooks in Git Bash when it's installed, otherwise PowerShell.
+  `powershell ... -File "$HOME/..."` expands in both, and Git Bash converts
+  `/c/Users/...` to a Windows path for `powershell.exe`. The hook reads stdin
+  as UTF-8 bytes (the console code page would mangle Cyrillic folder names)
+  and serializes through a named mutex instead of `mkdir`.
+
+### Windows conventions
+
+- Target Windows PowerShell **5.1**: no `??`, no ternary, no `&&`/`||`
+  between commands, no `ForEach-Object -Parallel`. `::new()` is fine.
+  C# in `Add-Type` is compiled by .NET Framework's C# 5: no `out var`, no
+  string interpolation.
+- `$ErrorActionPreference = 'Stop'` is set in the entry point. Cmdlets that
+  may legitimately fail take `-ErrorAction SilentlyContinue`, and
+  `watch_claude` catches errors per transition so one failure doesn't stop
+  the watcher.
+- Functions return everything they don't capture: wrap calls whose output
+  isn't wanted in `[void](...)`. `switch` runs every matching case, and
+  `continue`/`break` inside it act on the `switch`, not the loop around it.
+- Files are UTF-8 without BOM, written with `$UTF8`. `.ps1` and `.cmd` are
+  checked out with CRLF (`.gitattributes`).
+
+### Testing on Windows
+
+The same rules as above apply: fake status file
+(`DOOMSCROLLER_STATUS_FILE`), throwaway `HOME`, and never focus windows or
+press keys on the user's desktop. CDP behavior can be checked from any OS
+against `chrome --headless=new --remote-debugging-port=<port>
+--user-data-dir=<tmp>` with a small local page.
 
 ## Conventions
 

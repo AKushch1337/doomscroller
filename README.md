@@ -10,7 +10,8 @@ When Claude starts working, doomscroller opens the feed in your browser. When
 Claude finishes or stops to ask you something, it pauses the video and brings
 Claude back to the front.
 
-macOS only. Plain bash, no dependencies beyond what ships with macOS.
+macOS: plain bash, no dependencies beyond what ships with macOS.
+Windows: PowerShell and Google Chrome, see [Windows](#windows).
 
 ## How it works
 
@@ -209,6 +210,113 @@ granting:
 - **Fast replies.** A reply that takes a couple of seconds still sends you to
   the browser and right back.
 
+## Windows
+
+The Windows version lives in [windows/](windows). It does the same thing with
+the same commands, for Google Chrome (or another Chromium-based browser), in
+Windows PowerShell 5.1, which ships with Windows 10 and 11. Nothing to
+install.
+
+Windows has no AppleScript, so doomscroller drives Chrome through its
+debugging port (the Chrome DevTools Protocol). Since Chrome 136 that port
+works only with a separate profile, so **doomscroller starts its own Chrome
+window with its own profile** in `~\.doomscroller\browser-profile`. Your usual
+Chrome profile isn't touched. The first time, log in to Instagram or YouTube
+in that window.
+
+### Install
+
+1. Clone the repo and put `windows\` on your `PATH` (in PowerShell):
+
+   ```powershell
+   git clone https://github.com/kreslavskiy/doomscroller.git $HOME\doomscroller
+   ```
+
+   ```powershell
+   [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ";$HOME\doomscroller\windows", 'User')
+   ```
+
+   Open a new terminal afterwards, so it sees the new `PATH`.
+
+2. Install the hook. Add this to `~\.claude\settings.json`, merging it with any
+   `hooks` you already have. It points at the clone from step 1, so change the
+   path if you cloned elsewhere. The command works whether Claude Code runs
+   hooks in Git Bash or in PowerShell.
+
+   ```json
+   {
+     "hooks": {
+       "SessionStart":     [{ "hooks": [{ "type": "command", "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$HOME/doomscroller/windows/hooks/session-status.ps1\" idle" }] }],
+       "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$HOME/doomscroller/windows/hooks/session-status.ps1\" busy" }] }],
+       "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$HOME/doomscroller/windows/hooks/session-status.ps1\" busy" }] }],
+       "Notification":     [{ "hooks": [{ "type": "command", "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$HOME/doomscroller/windows/hooks/session-status.ps1\" waiting" }] }],
+       "Stop":             [{ "hooks": [{ "type": "command", "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$HOME/doomscroller/windows/hooks/session-status.ps1\" idle" }] }],
+       "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$HOME/doomscroller/windows/hooks/session-status.ps1\" end" }] }]
+     }
+   }
+   ```
+
+3. If you don't use the Claude desktop app, tell doomscroller which app to
+   return to, by its process name (the name in Task Manager's Details tab,
+   without `.exe`):
+
+   ```powershell
+   doomscroller config set claude-app WindowsTerminal
+   ```
+
+4. Run `doomscroller start`, send Claude a prompt, and log in to the feed's
+   site in the Chrome window that opens.
+
+### Usage and settings
+
+The commands and flags are the same as on macOS. The settings differ a little:
+
+| Setting      | Values                                                     | Default  |
+|--------------|------------------------------------------------------------|----------|
+| `site`       | `reels`, `shorts`                                          | `reels`  |
+| `browser`    | `chrome`, or the full path to a Chromium-based browser's `.exe` | `chrome` |
+| `claude-app` | process name of the app to return to (`claude`, `WindowsTerminal`, `Code`…) | `claude` |
+| `autoscroll` | `on`, `off`                                                | `off`    |
+| `debug-port` | port Chrome is controlled through                          | `9222`   |
+
+`DOOMSCROLLER_DEBUG_PORT` overrides `debug-port` like the other environment
+variables.
+
+### What's different from macOS
+
+- **No permissions to grant.** There's no Accessibility or Automation
+  prompt, and no "Allow JavaScript from Apple Events".
+- **Reels sound needs no key press.** Scripts run through the debugging
+  port count as user interaction, so the sound comes on even if Chrome isn't
+  in front.
+- **Pausing doesn't toggle.** doomscroller checks that the video is playing
+  before it presses the pause key, so a video you paused stays paused.
+- **Space on Shorts goes to the tab, not the keyboard.** It's sent straight
+  to the Shorts tab without typing anything, so it never lands in another app
+  or in YouTube's search box. Reels still use the media play/pause key, which
+  Windows sends to whatever is playing.
+
+### Windows security
+
+The debugging port gives any program on your computer full control of the
+Chrome window doomscroller starts, including the sites you're logged in to
+there. Chrome accepts connections only from this computer, and doomscroller
+uses its own profile so your usual Chrome isn't exposed. Log in to nothing
+but the feed's site in that window. When you stop using doomscroller, close
+that window, and delete `~\.doomscroller\browser-profile` if you want the
+logins gone.
+
+### Windows caveats
+
+- **That Chrome window must be started by doomscroller.** If you open the
+  doomscroller profile some other way, it runs without the debugging port.
+  Close it and let doomscroller start it.
+- **Bringing windows to the front can fail.** Windows limits which programs
+  may switch the window in front. If it refuses, the window's taskbar button
+  flashes instead, and the log says so.
+- **Each hook call starts PowerShell,** which adds a fraction of a second to
+  every tool call.
+
 ## Files
 
 | Path                            | What                                |
@@ -217,3 +325,4 @@ granting:
 | `~/.doomscroller/config`        | settings (`key=value` lines)        |
 | `~/.doomscroller/log`           | background watcher log              |
 | `~/.doomscroller/pid`           | pid of the running watcher          |
+| `~/.doomscroller/browser-profile` | Windows: the Chrome profile doomscroller starts Chrome with |
