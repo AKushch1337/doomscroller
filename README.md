@@ -226,6 +226,15 @@ in that window.
 
 ### Install
 
+After cloning, `windows\install.ps1` does steps 1 and 2 for you (it backs up
+`settings.json` first):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File $HOME\doomscroller\windows\install.ps1
+```
+
+By hand:
+
 1. Clone the repo and put `windows\` on your `PATH` (in PowerShell):
 
    ```powershell
