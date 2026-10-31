@@ -240,6 +240,13 @@ The page scripts in `lib/page/` are shared. Keep them browser-neutral.
   `/c/Users/...` to a Windows path for `powershell.exe`. The hook reads stdin
   as UTF-8 bytes (the console code page would mangle Cyrillic folder names)
   and serializes through a named mutex instead of `mkdir`.
+- **Stopping Claude yourself runs no hook.** Esc or the stop button skips
+  `Stop`, so the session's line would stay `busy`. The Windows hook writes
+  the session's `transcript_path` as a 5th field, and `line_state`
+  (claude.ps1) counts a busy line as idle when the transcript's last
+  user/assistant message is a user message starting with
+  `[Request interrupted by user` that is newer than the busy line. Only the
+  last 256 KB of the transcript is read. The macOS side doesn't do this yet.
 
 ### Windows conventions
 

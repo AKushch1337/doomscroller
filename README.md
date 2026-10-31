@@ -323,6 +323,10 @@ logins gone.
 - **Bringing windows to the front can fail.** Windows limits which programs
   may switch the window in front. If it refuses, the window's taskbar button
   flashes instead, and the log says so.
+- **Stopping Claude yourself is noticed from its transcript.** Claude Code
+  runs no hook when you press Esc or the stop button, so doomscroller looks
+  for Claude Code's "interrupted" note in the session's transcript and
+  counts the session as idle.
 - **Each hook call starts PowerShell,** which adds a fraction of a second to
   every tool call.
 

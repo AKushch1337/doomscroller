@@ -14,6 +14,9 @@ try {
   $sessionId = [string]$hook.session_id
   if (-not $sessionId) { exit 0 }
   $cwd = [string]$hook.cwd
+  # The watcher reads the transcript to notice when you stop Claude yourself:
+  # Claude Code runs no hook for that.
+  $transcript = [string]$hook.transcript_path
 
   $statusFile = Join-Path (Join-Path $HOME '.doomscroller') 'claude-status'
   [void][IO.Directory]::CreateDirectory((Split-Path $statusFile))
@@ -31,7 +34,7 @@ try {
       }
     }
     if ($State -ne 'end') {
-      $lines.Add(("{0}`t{1}`t{2}`t{3}" -f $State, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $sessionId, $cwd))
+      $lines.Add(("{0}`t{1}`t{2}`t{3}`t{4}" -f $State, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $sessionId, $cwd, $transcript))
     }
 
     # Write a temp file, then move it over the old one, so the watcher never
