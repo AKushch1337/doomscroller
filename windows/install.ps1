@@ -30,10 +30,33 @@ $settingsFile = Join-Path $claudeDir 'settings.json'
 if (Test-Path -LiteralPath $settingsFile) {
   $raw = [IO.File]::ReadAllText($settingsFile)
   $settings = if ($raw.Trim()) { $raw | ConvertFrom-Json } else { New-Object psobject }
-  Copy-Item -LiteralPath $settingsFile -Destination "$settingsFile.bak" -Force
+  # Keep the first backup: a rerun shouldn't replace it with a file this script wrote.
+  if (-not (Test-Path -LiteralPath "$settingsFile.bak")) {
+    Copy-Item -LiteralPath $settingsFile -Destination "$settingsFile.bak"
+  }
 } else {
   $settings = New-Object psobject
 }
+
+# Windows PowerShell 5.1 writes some arrays as {"value": [...], "Count": n}
+# because of an extra Count property on System.Array. Remove it, so arrays
+# come out as arrays, and undo that shape in a file an older install wrote.
+Remove-TypeData -TypeName System.Array -ErrorAction SilentlyContinue
+function unwrap_arrays($node) {
+  if ($node -is [Array]) { return ,@($node | ForEach-Object { unwrap_arrays $_ }) }
+  if ($node -is [psobject] -and $node -isnot [string] -and $node -isnot [ValueType]) {
+    $names = @($node.PSObject.Properties | ForEach-Object { $_.Name })
+    if ($names.Count -eq 2 -and $names -contains 'value' -and $names -contains 'Count') {
+      return ,@(@($node.value) | ForEach-Object { unwrap_arrays $_ })
+    }
+    foreach ($property in $node.PSObject.Properties) {
+      $property.Value = unwrap_arrays $property.Value
+    }
+  }
+  return $node
+}
+$settings = unwrap_arrays $settings
+
 if (-not $settings.PSObject.Properties['hooks']) {
   $settings | Add-Member -NotePropertyName hooks -NotePropertyValue (New-Object psobject)
 }
@@ -59,10 +82,18 @@ foreach ($event in $events.Keys) {
   }
   $added++
 }
-if ($added) {
-  $json = $settings | ConvertTo-Json -Depth 50
-  [IO.File]::WriteAllText($settingsFile, $json, [Text.UTF8Encoding]::new($false))
-  Write-Output "added $added hooks to $settingsFile (backup: settings.json.bak). Restart Claude Code to load them."
-} else {
-  Write-Output "hooks already installed in $settingsFile"
-}
+# Always rewrite, so a file broken by an older install gets fixed too.
+$json = ConvertTo-Json -InputObject $settings -Depth 50
+[IO.File]::WriteAllText($settingsFile, $json, [Text.UTF8Encoding]::new($false))
+Write-Output "hooks in ${settingsFile}: $added added, the rest were already there (backup: settings.json.bak)"
+Write-Output 'Restart Claude Code to load them.'
+
+# Check the hook itself: feed it a fake session and read the status file back.
+# "waiting" counts as idle, so a running watcher doesn't react.
+$statusFile = Join-Path $HOME '.doomscroller\claude-status'
+'{"session_id":"doomscroller-install-check","cwd":"install"}' |
+  powershell -NoProfile -ExecutionPolicy Bypass -File $hookScript waiting
+$ok = (Test-Path -LiteralPath $statusFile) -and ((Get-Content -LiteralPath $statusFile) -match 'doomscroller-install-check')
+'{"session_id":"doomscroller-install-check"}' |
+  powershell -NoProfile -ExecutionPolicy Bypass -File $hookScript end
+if ($ok) { Write-Output 'hook check: OK' } else { Write-Output "hook check: FAILED, nothing was written to $statusFile" }
